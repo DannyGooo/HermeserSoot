@@ -2,17 +2,12 @@ package soot.hermeser.instructions;
 
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Collections;
 import java.util.List;
-import java.util.Map;
-
-import soot.ArrayType;
 import soot.Body;
 import soot.Local;
 import soot.Modifier;
 import soot.Scene;
 import soot.SootMethod;
-import soot.SootMethodRef;
 import soot.Type;
 import soot.Unit;
 import soot.UnitPatchingChain;
@@ -20,13 +15,11 @@ import soot.Value;
 import soot.hermeser.members.HbcBlock;
 import soot.hermeser.members.HbcBody;
 import soot.hermeser.members.HbcInstruction;
-import soot.hermeser.members.HbcMethod;
 import soot.hermeser.text.HbcInstructionFormat;
 import soot.hermeser.text.HbcTypeFactory;
 import soot.hermeser.text.InvocationItem;
 import soot.jimple.AssignStmt;
 import soot.jimple.IntConstant;
-import soot.jimple.InvokeExpr;
 import soot.jimple.Jimple;
 import soot.jimple.NullConstant;
 import soot.jimple.Stmt;
@@ -36,13 +29,11 @@ public class HbcCallInstruction implements HbcInstruction {
     private HbcInstructionFormat instruction;
     private HbcBody hbcBody;
     private HbcBlock hbcBlock;
-    private String instructionJimpleName;
     
     public HbcCallInstruction(HbcInstructionFormat instruction, HbcBody hbcBody, HbcBlock hbcBlock, String instructionJimpleName) {
         this.instruction = instruction;
         this.hbcBody = hbcBody;
         this.hbcBlock = hbcBlock;
-        this.instructionJimpleName = instructionJimpleName;
     }
 
     @Override
@@ -60,6 +51,7 @@ public class HbcCallInstruction implements HbcInstruction {
         }
 
         createInvokeFunctionArg();
+        List<Value> arguLocals = createInvokeFunctionArgs();
 
 
         leftValue =HbcInstruction.getOrCreateLocal(
@@ -69,7 +61,7 @@ public class HbcCallInstruction implements HbcInstruction {
         );
 
 
-        Unit stmt = solveMethodFromCallee(calleeTypeName,  leftValue, hbcBody.getJimpleBody());   
+        Unit stmt = solveMethodFromCallee(calleeTypeName,  leftValue, hbcBody.getJimpleBody(), arguLocals );   
 
         
 
@@ -93,18 +85,17 @@ public class HbcCallInstruction implements HbcInstruction {
 
 
 
-    public static Stmt solveMethodFromCallee(String calleeTypeName, Value leftValue, Body sootMethodBOdyDeclaredFrom){
+    public static Stmt solveMethodFromCallee(String calleeTypeName, Value leftValue, Body sootMethodBOdyDeclaredFrom, List<Value> args ){
 
                  
         List<String> stringArray = new ArrayList<>(Arrays.asList(calleeTypeName.split("\\.")));
 
         String className = null, methodName = null;
         boolean isPhantom = false;
-        List<Value> args;
+        
         SootMethod invokedSootMethod;
         Type returnType;
         
-        args = getFunctionArgs(sootMethodBOdyDeclaredFrom);
 
         if (stringArray.size()==4 && calleeTypeName.startsWith("JavaScript.Function.")) {
             methodName = stringArray.get(3);
@@ -192,6 +183,59 @@ public class HbcCallInstruction implements HbcInstruction {
         return args;
     }
 
+    // create function args in the format of array list 
+    private List<Value> createInvokeFunctionArgs() {
+        List<Value> args = new ArrayList<>();
+
+        // （+1） call closure value
+        switch (instruction.opcodeDetailList[0]) {
+            case "Call":
+            case "CallLong":
+            case "Construct":
+            case "ConstructLong":
+                for (int i = 0; i < Integer.valueOf(instruction.opcodeDetailList[3]); i++) {
+                    args.add(
+                        HbcInstruction.getOrCreateLocal(
+                            "r" + (hbcBody.getHighestIndexRegister() - i),
+                            HbcTypeFactory.toSootType(HbcTypeFactory.JAVASCRIPT_OBJECT),
+                            hbcBody
+                        )
+                    );
+                }
+                // Collections.reverse(args);
+
+                break;
+            case "CallDirect":
+            case "CallDirectLongIndex":
+                for (int i = 0; i <= Integer.valueOf(instruction.opcodeDetailList[2]); i++) {                    
+                    args.add(
+                        HbcInstruction.getOrCreateLocal(
+                            "r" + (hbcBody.getHighestIndexRegister() - i),
+                            HbcTypeFactory.toSootType(HbcTypeFactory.JAVASCRIPT_OBJECT),
+                            hbcBody
+                        )
+                    );
+                }
+                break;
+            case "Call1":
+            case "Call2":
+            case "Call3":
+            case "Call4":
+                for (int i = 3; i < instruction.opcodeDetailList.length; i++) {
+                    args.add(
+                        HbcInstruction.getOrCreateLocal(instruction.opcodeDetailList[i], null, hbcBody)
+                    );
+                }
+                break;
+            default:
+                args.add(
+                    hbcBody.newTemp(HbcTypeFactory.toSootType(HbcTypeFactory.JAVASCRIPT_UNDEFINED))
+                );
+                break;
+        }
+
+        return args;
+    }
 
     private Local createInvokeFunctionArg() {
         int numberOfArguments;
